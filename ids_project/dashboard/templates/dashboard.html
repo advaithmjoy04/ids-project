@@ -1,0 +1,508 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>IDS - Intrusion Detection System</title>
+    <script src="https://cdn.socket.io/4.5.4/socket.io.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: #fff;
+            padding: 20px;
+        }
+
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
+        }
+
+        .header {
+            text-align: center;
+            padding: 30px 0;
+            background: rgba(0, 0, 0, 0.2);
+            border-radius: 10px;
+            margin-bottom: 30px;
+        }
+
+        .header h1 {
+            font-size: 2.5em;
+            margin-bottom: 10px;
+        }
+
+        .status-indicator {
+            display: inline-block;
+            width: 12px;
+            height: 12px;
+            border-radius: 50%;
+            margin-left: 10px;
+            animation: pulse 2s infinite;
+        }
+
+        .status-active {
+            background-color: #10b981;
+        }
+
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.5; }
+        }
+
+        .stats-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+            gap: 20px;
+            margin-bottom: 30px;
+        }
+
+        .stat-card {
+            background: rgba(255, 255, 255, 0.1);
+            backdrop-filter: blur(10px);
+            padding: 25px;
+            border-radius: 10px;
+            border: 1px solid rgba(255, 255, 255, 0.2);
+        }
+
+        .stat-card h3 {
+            font-size: 0.9em;
+            opacity: 0.8;
+            margin-bottom: 10px;
+        }
+
+        .stat-value {
+            font-size: 2.5em;
+            font-weight: bold;
+        }
+
+        .threat-alert {
+            background: #ef4444;
+            color: #fff;
+            padding: 20px;
+            border-radius: 10px;
+            margin-bottom: 20px;
+            display: none;
+            animation: slideIn 0.3s ease-out;
+        }
+
+        @keyframes slideIn {
+            from {
+                transform: translateY(-20px);
+                opacity: 0;
+            }
+            to {
+                transform: translateY(0);
+                opacity: 1;
+            }
+        }
+
+        .threat-alert h2 {
+            margin-bottom: 10px;
+        }
+
+        .charts-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(400px, 1fr));
+            gap: 20px;
+            margin-bottom: 30px;
+        }
+
+        .chart-container {
+            background: rgba(255, 255, 255, 0.1);
+            backdrop-filter: blur(10px);
+            padding: 20px;
+            border-radius: 10px;
+            border: 1px solid rgba(255, 255, 255, 0.2);
+        }
+
+        .chart-container h3 {
+            margin-bottom: 15px;
+        }
+
+        .threats-table {
+            background: rgba(255, 255, 255, 0.1);
+            backdrop-filter: blur(10px);
+            padding: 20px;
+            border-radius: 10px;
+            border: 1px solid rgba(255, 255, 255, 0.2);
+            overflow-x: auto;
+        }
+
+        table {
+            width: 100%;
+            border-collapse: collapse;
+        }
+
+        th {
+            text-align: left;
+            padding: 12px;
+            background: rgba(0, 0, 0, 0.2);
+            font-weight: 600;
+        }
+
+        td {
+            padding: 12px;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+        }
+
+        tr:hover {
+            background: rgba(255, 255, 255, 0.05);
+        }
+
+        .threat-badge {
+            display: inline-block;
+            padding: 4px 12px;
+            border-radius: 20px;
+            font-size: 0.85em;
+            font-weight: 600;
+        }
+
+        .threat-detected {
+            background-color: #ef4444;
+        }
+
+        .threat-normal {
+            background-color: #10b981;
+        }
+
+        .confidence {
+            font-weight: bold;
+        }
+
+        .high-confidence {
+            color: #fca5a5;
+        }
+
+        .medium-confidence {
+            color: #fde047;
+        }
+
+        .low-confidence {
+            color: #86efac;
+        }
+
+        .test-button {
+            background: #3b82f6;
+            color: #fff;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 5px;
+            cursor: pointer;
+            font-size: 1em;
+            margin-top: 20px;
+        }
+
+        .test-button:hover {
+            background: #2563eb;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>🛡️ Intrusion Detection System</h1>
+            <p>Real-time Network Threat Monitoring
+                <span class="status-indicator status-active" id="statusIndicator"></span>
+            </p>
+        </div>
+
+        <div class="threat-alert" id="threatAlert">
+            <h2>⚠️ THREAT DETECTED!</h2>
+            <p id="threatMessage"></p>
+        </div>
+
+        <div class="stats-grid">
+            <div class="stat-card">
+                <h3>Total Analyzed</h3>
+                <div class="stat-value" id="totalAnalyzed">0</div>
+            </div>
+            <div class="stat-card">
+                <h3>Threats Detected</h3>
+                <div class="stat-value" id="threatsDetected">0</div>
+            </div>
+            <div class="stat-card">
+                <h3>Threat Rate</h3>
+                <div class="stat-value" id="threatRate">0%</div>
+            </div>
+            <div class="stat-card">
+                <h3>Avg Confidence</h3>
+                <div class="stat-value" id="avgConfidence">0%</div>
+            </div>
+        </div>
+
+        <div class="charts-grid">
+            <div class="chart-container">
+                <h3>Threat Detection Over Time</h3>
+                <canvas id="threatChart"></canvas>
+            </div>
+            <div class="chart-container">
+                <h3>Threat Distribution</h3>
+                <canvas id="distributionChart"></canvas>
+            </div>
+        </div>
+
+        <div class="threats-table">
+            <h3>Recent Threats</h3>
+            <button class="test-button" onclick="testAlert()">Test SMS Alert</button>
+            <table>
+                <thead>
+                    <tr>
+                        <th>Time</th>
+                        <th>Source IP</th>
+                        <th>Destination IP</th>
+                        <th>Status</th>
+                        <th>Confidence</th>
+                    </tr>
+                </thead>
+                <tbody id="threatsTableBody">
+                    <tr>
+                        <td colspan="5" style="text-align: center; opacity: 0.6;">
+                            Waiting for traffic data...
+                        </td>
+                    </tr>
+                </tbody>
+            </table>
+        </div>
+    </div>
+
+    <script>
+        // WebSocket connection
+        const socket = io('http://localhost:5000');
+
+        // Chart configurations
+        const threatChartCtx = document.getElementById('threatChart').getContext('2d');
+        const distributionChartCtx = document.getElementById('distributionChart').getContext('2d');
+
+        const threatChart = new Chart(threatChartCtx, {
+            type: 'line',
+            data: {
+                labels: [],
+                datasets: [{
+                    label: 'Threats Detected',
+                    data: [],
+                    borderColor: '#ef4444',
+                    backgroundColor: 'rgba(239, 68, 68, 0.1)',
+                    tension: 0.4
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: true,
+                plugins: {
+                    legend: {
+                        labels: { color: '#fff' }
+                    }
+                },
+                scales: {
+                    y: {
+                        beginAtZero: true,
+                        ticks: { color: '#fff' },
+                        grid: { color: 'rgba(255, 255, 255, 0.1)' }
+                    },
+                    x: {
+                        ticks: { color: '#fff' },
+                        grid: { color: 'rgba(255, 255, 255, 0.1)' }
+                    }
+                }
+            }
+        });
+
+        const distributionChart = new Chart(distributionChartCtx, {
+            type: 'doughnut',
+            data: {
+                labels: ['Normal', 'Threats'],
+                datasets: [{
+                    data: [0, 0],
+                    backgroundColor: ['#10b981', '#ef4444']
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: true,
+                plugins: {
+                    legend: {
+                        labels: { color: '#fff' }
+                    }
+                }
+            }
+        });
+
+        // Data storage
+        let threatHistory = [];
+        let normalCount = 0;
+        let threatCount = 0;
+
+        // Socket event handlers
+        socket.on('connect', () => {
+            console.log('Connected to IDS server');
+            loadInitialData();
+        });
+
+        socket.on('threat_update', (data) => {
+            handleThreatUpdate(data);
+        });
+
+        // Load initial data
+        function loadInitialData() {
+            fetch('/threats')
+                .then(response => response.json())
+                .then(data => {
+                    threatHistory = data.threats || [];
+                    updateDashboard();
+                });
+
+            fetch('/stats')
+                .then(response => response.json())
+                .then(data => {
+                    updateStats(data);
+                });
+        }
+
+        // Handle new threat update
+        function handleThreatUpdate(data) {
+            threatHistory.push(data);
+            if (threatHistory.length > 100) {
+                threatHistory.shift();
+            }
+
+            if (data.threat_detected) {
+                threatCount++;
+                showThreatAlert(data);
+            } else {
+                normalCount++;
+            }
+
+            updateDashboard();
+            updateStats();
+        }
+
+        // Show threat alert
+        function showThreatAlert(data) {
+            const alert = document.getElementById('threatAlert');
+            const message = document.getElementById('threatMessage');
+            
+            message.innerHTML = `
+                <strong>Source:</strong> ${data.src_ip}<br>
+                <strong>Destination:</strong> ${data.dst_ip}<br>
+                <strong>Confidence:</strong> ${(data.confidence * 100).toFixed(1)}%<br>
+                <strong>Time:</strong> ${new Date(data.timestamp).toLocaleString()}
+            `;
+            
+            alert.style.display = 'block';
+            
+            setTimeout(() => {
+                alert.style.display = 'none';
+            }, 5000);
+        }
+
+        // Update dashboard
+        function updateDashboard() {
+            updateThreatsTable();
+            updateCharts();
+        }
+
+        // Update statistics
+        function updateStats(data) {
+            if (!data) {
+                data = {
+                    total_analyzed: normalCount + threatCount,
+                    threats_detected: threatCount,
+                    threat_rate: threatCount / (normalCount + threatCount) || 0,
+                    avg_confidence: threatHistory
+                        .filter(t => t.threat_detected)
+                        .reduce((sum, t) => sum + t.confidence, 0) / threatCount || 0
+                };
+            }
+
+            document.getElementById('totalAnalyzed').textContent = data.total_analyzed;
+            document.getElementById('threatsDetected').textContent = data.threats_detected;
+            document.getElementById('threatRate').textContent = 
+                (data.threat_rate * 100).toFixed(1) + '%';
+            document.getElementById('avgConfidence').textContent = 
+                (data.avg_confidence * 100).toFixed(1) + '%';
+        }
+
+        // Update threats table
+        function updateThreatsTable() {
+            const tbody = document.getElementById('threatsTableBody');
+            
+            if (threatHistory.length === 0) return;
+
+            const recentThreats = threatHistory.slice(-20).reverse();
+            
+            tbody.innerHTML = recentThreats.map(threat => {
+                const confidence = (threat.confidence * 100).toFixed(1);
+                const confidenceClass = confidence > 80 ? 'high-confidence' : 
+                                       confidence > 50 ? 'medium-confidence' : 
+                                       'low-confidence';
+                
+                return `
+                    <tr>
+                        <td>${new Date(threat.timestamp).toLocaleTimeString()}</td>
+                        <td>${threat.src_ip}</td>
+                        <td>${threat.dst_ip}</td>
+                        <td>
+                            <span class="threat-badge ${threat.threat_detected ? 'threat-detected' : 'threat-normal'}">
+                                ${threat.threat_detected ? 'THREAT' : 'Normal'}
+                            </span>
+                        </td>
+                        <td class="confidence ${confidenceClass}">${confidence}%</td>
+                    </tr>
+                `;
+            }).join('');
+        }
+
+        // Update charts
+        function updateCharts() {
+            // Update time series chart
+            const times = threatHistory.slice(-20).map((t, i) => i + 1);
+            const threatCounts = [];
+            let count = 0;
+            
+            threatHistory.slice(-20).forEach(t => {
+                if (t.threat_detected) count++;
+                threatCounts.push(count);
+            });
+
+            threatChart.data.labels = times;
+            threatChart.data.datasets[0].data = threatCounts;
+            threatChart.update();
+
+            // Update distribution chart
+            distributionChart.data.datasets[0].data = [normalCount, threatCount];
+            distributionChart.update();
+        }
+
+        // Test alert function
+        function testAlert() {
+            fetch('/test-alert', { method: 'POST' })
+                .then(response => response.json())
+                .then(data => {
+                    alert(data.message || data.error || 'Alert sent!');
+                })
+                .catch(error => {
+                    alert('Error sending test alert: ' + error);
+                });
+        }
+
+        // Refresh data periodically
+        setInterval(() => {
+            fetch('/stats')
+                .then(response => response.json())
+                .then(data => {
+                    updateStats(data);
+                });
+        }, 10000);
+
+        // Initial load
+        loadInitialData();
+    </script>
+</body>
+</html>

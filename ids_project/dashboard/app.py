@@ -221,6 +221,15 @@ class IDSEngine:
 # Initialize IDS engine
 ids_engine = IDSEngine()
 
+# Allow /analyze endpoint without authentication (for network monitor)
+@app.before_request
+def check_api_access():
+    """Allow /analyze endpoint without authentication"""
+    if request.path == '/analyze' and request.method == 'POST':
+        # Skip authentication for /analyze endpoint - allow API access
+        return None
+    # For all other routes, continue with normal processing
+
 # Authentication decorator
 def login_required(f):
     """Decorator to require login for routes"""

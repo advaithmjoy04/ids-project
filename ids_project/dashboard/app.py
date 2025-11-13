@@ -272,10 +272,27 @@ def analyze_traffic():
     # Allow API access from localhost without authentication (for network monitor)
     # Dashboard routes still require login
     try:
+        # Check if request has JSON
+        if not request.is_json:
+            return jsonify({'error': 'Request must be JSON'}), 400
+        
         features = request.json
+        if not features:
+            return jsonify({'error': 'No features provided'}), 400
+        
+        # Check if model is loaded
+        if ids_engine.model is None:
+            return jsonify({'error': 'Model not loaded. Please train the model first.'}), 503
+        
         result = ids_engine.predict(features)
+        
+        # Ensure result is a dict (predict might return error dict)
+        if not isinstance(result, dict):
+            return jsonify({'error': 'Invalid prediction result'}), 500
+        
         return jsonify(result)
     except Exception as e:
+        # Always return JSON, even for errors
         return jsonify({'error': str(e)}), 400
 
 @app.route('/threats', methods=['GET'])

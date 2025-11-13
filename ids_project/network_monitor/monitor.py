@@ -19,6 +19,9 @@ API_URL = "http://localhost:5000/analyze"
 CONNECTION_CLEANUP_INTERVAL = 300  # 5 minutes
 MAX_CONNECTION_AGE = 600  # 10 minutes
 
+# Debug mode - set to True to see all packet captures
+DEBUG_MODE = False
+
 class NetworkMonitor:
     def __init__(self, interface="eth0", queue_size=100):
         self.interface = interface
@@ -213,11 +216,17 @@ class NetworkMonitor:
             conn_state['last_update'] = time.time()
             packet_count = len(conn_state['packets'])
             
+            # Debug output
+            if DEBUG_MODE:
+                print(f"📦 Packet captured: {features['src_ip']}:{src_port} -> {features['dst_ip']}:{dst_port} ({packet_count}/{PACKETS_PER_CONNECTION})")
+            
             # Check if we have enough packets for analysis
             if packet_count >= PACKETS_PER_CONNECTION:
                 packets_to_analyze = list(conn_state['packets'])
                 # Clear packets after copying
                 conn_state['packets'].clear()
+                if DEBUG_MODE:
+                    print(f"✅ Ready to analyze: {conn_key} ({len(packets_to_analyze)} packets)")
         
         # Process outside lock to avoid blocking packet capture
         if packets_to_analyze:
@@ -282,7 +291,11 @@ class NetworkMonitor:
         """Start capturing network traffic"""
         print(f"Starting network monitoring on interface: {self.interface}")
         print("Capturing packets... Press Ctrl+C to stop")
-        print(f"Waiting for {PACKETS_PER_CONNECTION} packets per connection before analysis...\n")
+        print(f"Waiting for {PACKETS_PER_CONNECTION} packets per connection before analysis...")
+        print("\n💡 TIP: Generate traffic in another terminal:")
+        print("   ping -c 20 8.8.8.8")
+        print("   curl http://www.google.com")
+        print("   Or run: ./GENERATE_TEST_TRAFFIC.sh\n")
         
         # Test API connection before starting
         try:
@@ -296,6 +309,10 @@ class NetworkMonitor:
             print("   Please start the dashboard server first!\n")
         except Exception as e:
             print(f"⚠️  Could not verify API connection: {e}\n")
+        
+        # Show packet capture status
+        print("📊 Monitoring started. Waiting for network traffic...")
+        print("   (You should see '✓ Analyzed' messages when traffic is detected)\n")
         
         try:
             sniff(

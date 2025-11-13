@@ -226,7 +226,11 @@ def login_required(f):
     """Decorator to require login for routes"""
     @wraps(f)
     def decorated_function(*args, **kwargs):
-        if 'logged_in' not in session or not session['logged_in']:
+        # For API endpoints, return JSON error instead of redirect
+        if request.path.startswith('/api/') or request.path == '/analyze':
+            if 'logged_in' not in session or not session['logged_in']:
+                return jsonify({'error': 'Authentication required'}), 401
+        elif 'logged_in' not in session or not session['logged_in']:
             return redirect(url_for('login'))
         return f(*args, **kwargs)
     return decorated_function
@@ -266,11 +270,15 @@ def index():
     username = session.get('username', 'admin')
     return render_template('dashboard.html', username=username)
 
-@app.route('/analyze', methods=['POST'])
+@app.route('/analyze', methods=['POST', 'OPTIONS'])
 def analyze_traffic():
     """Analyze network traffic - Allow API access without login for monitor"""
     # Allow API access from localhost without authentication (for network monitor)
     # Dashboard routes still require login
+    # Handle CORS preflight
+    if request.method == 'OPTIONS':
+        return '', 200
+    
     try:
         # Check if request has JSON
         if not request.is_json:

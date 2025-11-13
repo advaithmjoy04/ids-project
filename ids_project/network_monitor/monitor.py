@@ -13,8 +13,8 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 # Constants
-PACKETS_PER_CONNECTION = 5
-API_TIMEOUT = 2
+PACKETS_PER_CONNECTION = 3  # Reduced from 5 to capture traffic faster
+API_TIMEOUT = 5  # Increased timeout
 API_URL = "http://localhost:5000/analyze"
 CONNECTION_CLEANUP_INTERVAL = 300  # 5 minutes
 MAX_CONNECTION_AGE = 600  # 10 minutes
@@ -303,10 +303,8 @@ class NetworkMonitor:
         print(f"Starting network monitoring on interface: {self.interface}")
         print("Capturing packets... Press Ctrl+C to stop")
         print(f"Waiting for {PACKETS_PER_CONNECTION} packets per connection before analysis...")
-        print("\n💡 TIP: Generate traffic in another terminal:")
-        print("   ping -c 20 8.8.8.8")
-        print("   curl http://www.google.com")
-        print("   Or run: ./GENERATE_TEST_TRAFFIC.sh\n")
+        print("\n📡 Monitoring ALL network traffic on this interface automatically")
+        print("   No need to generate test traffic - real traffic will be captured!\n")
         
         # Test API connection before starting (use /analyze endpoint which doesn't require login)
         try:

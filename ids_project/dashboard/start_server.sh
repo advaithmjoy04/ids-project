@@ -22,7 +22,16 @@ elif [ -d "../venv" ]; then
     echo "✓ Activating virtual environment (parent directory)..."
     source ../venv/bin/activate
 else
-    echo "⚠️  No virtual environment found. Using system Python..."
+    echo "❌ No virtual environment found!"
+    echo "   Please run: ./install_kali.sh"
+    echo "   Or create venv manually: python3 -m venv venv && source venv/bin/activate && pip install -r data/requirements.txt"
+    exit 1
+fi
+
+# Verify Flask is installed
+if ! python3 -c "import flask" 2>/dev/null; then
+    echo "⚠️  Flask not found in virtual environment. Installing requirements..."
+    pip install -r data/requirements.txt
 fi
 
 # Check Python version

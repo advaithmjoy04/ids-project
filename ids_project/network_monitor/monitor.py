@@ -402,16 +402,16 @@ class NetworkMonitor:
 
 if __name__ == "__main__":
     import sys
-    global DEBUG_MODE
     
     # Parse command line arguments - default to eth0
     interface = "eth0"  # Default interface
     
     # Parse arguments
     args = sys.argv[1:]
+    debug_enabled = False
     for i, arg in enumerate(args):
         if arg in ["--debug", "-d"]:
-            DEBUG_MODE = True
+            debug_enabled = True
         elif arg in ["--interface", "-i"] and i + 1 < len(args):
             interface = args[i + 1]
         elif not arg.startswith("-") and i == 0:
@@ -419,7 +419,13 @@ if __name__ == "__main__":
             interface = arg
     
     if "--debug" in args or "-d" in args:
-        DEBUG_MODE = True
+        debug_enabled = True
+    
+    # Set global DEBUG_MODE
+    global DEBUG_MODE
+    DEBUG_MODE = debug_enabled
+    
+    if DEBUG_MODE:
         print("🐛 DEBUG MODE ENABLED - Verbose output active\n")
     
     print("=" * 60)

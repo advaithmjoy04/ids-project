@@ -403,14 +403,35 @@ class NetworkMonitor:
 if __name__ == "__main__":
     import sys
     
-    # Get interface from command line or use default
-    interface = sys.argv[1] if len(sys.argv) > 1 else "eth0"
+    # Parse command line arguments - default to eth0
+    interface = "eth0"  # Default interface
+    global DEBUG_MODE
+    
+    # Parse arguments
+    args = sys.argv[1:]
+    for i, arg in enumerate(args):
+        if arg in ["--debug", "-d"]:
+            DEBUG_MODE = True
+        elif arg in ["--interface", "-i"] and i + 1 < len(args):
+            interface = args[i + 1]
+        elif not arg.startswith("-") and i == 0:
+            # First non-flag argument is interface name
+            interface = arg
+    
+    if "--debug" in args or "-d" in args:
+        DEBUG_MODE = True
+        print("🐛 DEBUG MODE ENABLED - Verbose output active\n")
     
     print("=" * 60)
     print("Network Traffic Monitor for IDS")
     print("=" * 60)
     print(f"Interface: {interface}")
+    if interface == "eth0":
+        print("   (Using default: eth0)")
     print("Make sure the IDS API is running on http://localhost:5000")
+    print(f"Packets per connection: {PACKETS_PER_CONNECTION}")
+    if DEBUG_MODE:
+        print("Debug mode: ON")
     print("=" * 60 + "\n")
     
     monitor = NetworkMonitor(interface=interface)

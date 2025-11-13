@@ -246,19 +246,27 @@ class NetworkMonitor:
             )
             
             if response.status_code == 200:
-                result = response.json()
-                # Always print when data is sent successfully (for debugging)
-                print(f"✓ Analyzed: {features['src_ip']} -> {features['dst_ip']} (Confidence: {result.get('confidence', 0):.1%})")
-                
-                if result.get('threat_detected'):
-                    confidence = result.get('confidence', 0)
-                    print(f"\n⚠️  THREAT DETECTED!")
-                    print(f"   Source: {features['src_ip']}")
-                    print(f"   Destination: {features['dst_ip']}")
-                    print(f"   Confidence: {confidence:.2%}")
-                    print(f"   Time: {features['timestamp']}\n")
+                # Check if response is JSON
+                try:
+                    result = response.json()
+                    # Always print when data is sent successfully (for debugging)
+                    print(f"✓ Analyzed: {features['src_ip']} -> {features['dst_ip']} (Confidence: {result.get('confidence', 0):.1%})")
+                    
+                    if result.get('threat_detected'):
+                        confidence = result.get('confidence', 0)
+                        print(f"\n⚠️  THREAT DETECTED!")
+                        print(f"   Source: {features['src_ip']}")
+                        print(f"   Destination: {features['dst_ip']}")
+                        print(f"   Confidence: {confidence:.2%}")
+                        print(f"   Time: {features['timestamp']}\n")
+                except ValueError as json_error:
+                    # Response is not JSON - might be HTML (login page) or error
+                    print(f"❌ API returned non-JSON response (status {response.status_code})")
+                    print(f"   Response preview: {response.text[:200]}")
+                    print(f"   This might mean the /analyze endpoint requires authentication")
             else:
-                print(f"⚠️  API returned status {response.status_code}: {response.text[:100]}")
+                print(f"⚠️  API returned status {response.status_code}")
+                print(f"   Response: {response.text[:200]}")
                     
         except requests.exceptions.Timeout:
             print("⚠️  API timeout - server might be overloaded")
@@ -266,6 +274,9 @@ class NetworkMonitor:
             print("❌ Cannot connect to IDS API. Is the server running on http://localhost:5000?")
         except requests.exceptions.RequestException as e:
             print(f"⚠️  Request error: {e}")
+        except ValueError as json_error:
+            print(f"❌ JSON parsing error: {json_error}")
+            print(f"   The API might be returning HTML instead of JSON")
         except Exception as e:
             print(f"❌ Unexpected error sending to IDS: {e}")
     
@@ -297,9 +308,13 @@ class NetworkMonitor:
         print("   curl http://www.google.com")
         print("   Or run: ./GENERATE_TEST_TRAFFIC.sh\n")
         
-        # Test API connection before starting
+        # Test API connection before starting (use /analyze endpoint which doesn't require login)
         try:
-            test_response = requests.get("http://localhost:5000/stats", timeout=2)
+            test_response = requests.post(
+                "http://localhost:5000/analyze",
+                json={'test': 'connection'},
+                timeout=2
+            )
             if test_response.status_code == 200:
                 print("✓ IDS API is running and accessible\n")
             else:

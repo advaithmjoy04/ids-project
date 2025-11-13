@@ -4,36 +4,53 @@ Processes packets and sends to IDS for analysis
 """
 
 from scapy.all import sniff, IP, TCP, UDP, ICMP
-import pandas as pd
-import numpy as np
-from collections import defaultdict
+from collections import defaultdict, deque
 import time
 from datetime import datetime
 import threading
-import json
 import requests
+from concurrent.futures import ThreadPoolExecutor
+from pathlib import Path
+
+# Constants
+PACKETS_PER_CONNECTION = 5
+API_TIMEOUT = 2
+API_URL = "http://localhost:5000/analyze"
+CONNECTION_CLEANUP_INTERVAL = 300  # 5 minutes
+MAX_CONNECTION_AGE = 600  # 10 minutes
 
 class NetworkMonitor:
     def __init__(self, interface="eth0", queue_size=100):
         self.interface = interface
         self.queue_size = queue_size
         self.connection_states = defaultdict(lambda: {
-            'packets': [],
+            'packets': deque(maxlen=PACKETS_PER_CONNECTION * 2),  # Allow some overflow
             'start_time': time.time(),
-            'features': {}
+            'last_update': time.time()
         })
-        self.feature_window = []
-        self.api_url = "http://localhost:5000/analyze"
+        self.api_url = API_URL
+        self.executor = ThreadPoolExecutor(max_workers=5, thread_name_prefix="IDS-API")
+        self._lock = threading.Lock()
+        self._running = True
+        
+        # Start cleanup thread
+        cleanup_thread = threading.Thread(target=self._cleanup_old_connections, daemon=True)
+        cleanup_thread.start()
         
     def extract_packet_features(self, packet):
-        """Extract features from a single packet"""
+        """Extract features from a single packet - optimized"""
         try:
             if not packet.haslayer(IP):
                 return None
             
             ip_layer = packet[IP]
+            timestamp = datetime.now().isoformat()
+            timestamp_raw = time.time()
+            
+            # Base features
             features = {
-                'timestamp': datetime.now().isoformat(),
+                'timestamp': timestamp,
+                'timestamp_raw': timestamp_raw,
                 'src_ip': ip_layer.src,
                 'dst_ip': ip_layer.dst,
                 'protocol': ip_layer.proto,
@@ -41,17 +58,16 @@ class NetworkMonitor:
                 'ttl': ip_layer.ttl,
             }
             
-            # TCP features
+            # Protocol-specific features - use if/elif chain for efficiency
             if packet.haslayer(TCP):
                 tcp_layer = packet[TCP]
                 features.update({
                     'src_port': tcp_layer.sport,
                     'dst_port': tcp_layer.dport,
-                    'tcp_flags': tcp_layer.flags.value if hasattr(tcp_layer.flags, 'value') else 0,
+                    'tcp_flags': getattr(tcp_layer.flags, 'value', 0),
                     'window_size': tcp_layer.window,
                     'protocol_type': 'tcp'
                 })
-            # UDP features
             elif packet.haslayer(UDP):
                 udp_layer = packet[UDP]
                 features.update({
@@ -59,7 +75,6 @@ class NetworkMonitor:
                     'dst_port': udp_layer.dport,
                     'protocol_type': 'udp'
                 })
-            # ICMP features
             elif packet.haslayer(ICMP):
                 features.update({
                     'protocol_type': 'icmp',
@@ -76,28 +91,37 @@ class NetworkMonitor:
             return features
             
         except Exception as e:
-            print(f"Error extracting features: {e}")
+            # Silently skip malformed packets to avoid spam
             return None
     
     def compute_connection_features(self, packets):
-        """Compute aggregated connection features from packet list"""
+        """Compute aggregated connection features from packet list - optimized"""
         if not packets:
             return None
         
         try:
-            # Basic stats
-            duration = packets[-1]['timestamp_raw'] - packets[0]['timestamp_raw']
-            src_bytes = sum(p.get('packet_size', 0) for p in packets if p.get('src_ip') == packets[0].get('src_ip'))
-            dst_bytes = sum(p.get('packet_size', 0) for p in packets if p.get('dst_ip') == packets[0].get('src_ip'))
+            # Convert deque to list for indexing
+            packet_list = list(packets)
+            first_packet = packet_list[0]
+            last_packet = packet_list[-1]
+            
+            # Basic stats - more efficient calculation
+            duration = last_packet.get('timestamp_raw', 0) - first_packet.get('timestamp_raw', 0)
+            src_ip = first_packet.get('src_ip')
+            dst_ip = first_packet.get('dst_ip')
+            
+            # Calculate bytes more efficiently
+            src_bytes = sum(p.get('packet_size', 0) for p in packet_list if p.get('src_ip') == src_ip)
+            dst_bytes = sum(p.get('packet_size', 0) for p in packet_list if p.get('dst_ip') == dst_ip)
             
             # Service and protocol
-            protocol_type = packets[0].get('protocol_type', 'tcp')
-            dst_port = packets[0].get('dst_port', 0)
+            protocol_type = first_packet.get('protocol_type', 'tcp')
+            dst_port = first_packet.get('dst_port', 0)
             
-            # Map port to service (simplified)
+            # Map port to service
             service = self.map_port_to_service(dst_port)
             
-            # Connection flags (simplified)
+            # Connection flags
             flag = 'SF'  # Default to normal connection
             
             features = {
@@ -145,75 +169,112 @@ class NetworkMonitor:
             }
             
             # Add metadata
-            features['src_ip'] = packets[0].get('src_ip')
-            features['dst_ip'] = packets[0].get('dst_ip')
-            features['timestamp'] = packets[0].get('timestamp')
+            features['src_ip'] = src_ip
+            features['dst_ip'] = dst_ip
+            features['timestamp'] = first_packet.get('timestamp')
             
             return features
             
         except Exception as e:
-            print(f"Error computing connection features: {e}")
+            # Log error but don't spam console
             return None
     
-    def map_port_to_service(self, port):
-        """Map port number to service name"""
-        port_map = {
-            20: 'ftp_data', 21: 'ftp', 22: 'ssh', 23: 'telnet',
-            25: 'smtp', 53: 'domain_u', 80: 'http', 110: 'pop_3',
-            143: 'imap4', 443: 'https', 3306: 'mysql', 5432: 'postgres',
-            6379: 'redis', 8080: 'http_8080', 8443: 'https_alt'
-        }
-        return port_map.get(port, 'other')
+    # Class-level constant for port mapping
+    PORT_SERVICE_MAP = {
+        20: 'ftp_data', 21: 'ftp', 22: 'ssh', 23: 'telnet',
+        25: 'smtp', 53: 'domain_u', 80: 'http', 110: 'pop_3',
+        143: 'imap4', 443: 'https', 3306: 'mysql', 5432: 'postgres',
+        6379: 'redis', 8080: 'http_8080', 8443: 'https_alt'
+    }
+    
+    @classmethod
+    def map_port_to_service(cls, port):
+        """Map port number to service name - optimized with class constant"""
+        return cls.PORT_SERVICE_MAP.get(port, 'other')
     
     def packet_handler(self, packet):
-        """Handle each captured packet"""
+        """Handle each captured packet - optimized"""
         features = self.extract_packet_features(packet)
         
-        if features:
-            features['timestamp_raw'] = time.time()
+        if not features:
+            return
+        
+        # Create connection key efficiently
+        src_port = features.get('src_port', 0)
+        dst_port = features.get('dst_port', 0)
+        conn_key = f"{features['src_ip']}:{src_port}-{features['dst_ip']}:{dst_port}"
+        
+        packets_to_analyze = None
+        
+        # Thread-safe access to connection states
+        with self._lock:
+            conn_state = self.connection_states[conn_key]
+            conn_state['packets'].append(features)
+            conn_state['last_update'] = time.time()
             
-            # Create connection key
-            conn_key = f"{features['src_ip']}:{features.get('src_port', 0)}-{features['dst_ip']}:{features.get('dst_port', 0)}"
+            # Check if we have enough packets for analysis
+            if len(conn_state['packets']) >= PACKETS_PER_CONNECTION:
+                packets_to_analyze = list(conn_state['packets'])
+                # Clear packets after copying
+                conn_state['packets'].clear()
+        
+        # Process outside lock to avoid blocking packet capture
+        if packets_to_analyze:
+            conn_features = self.compute_connection_features(packets_to_analyze)
             
-            # Add to connection state
-            self.connection_states[conn_key]['packets'].append(features)
-            
-            # If we have enough packets, analyze the connection
-            if len(self.connection_states[conn_key]['packets']) >= 5:
-                conn_features = self.compute_connection_features(
-                    self.connection_states[conn_key]['packets']
-                )
-                
-                if conn_features:
-                    # Send to IDS for analysis
-                    self.send_to_ids(conn_features)
-                    
-                # Clear old packets
-                self.connection_states[conn_key]['packets'] = []
+            if conn_features:
+                # Send to IDS asynchronously
+                self.executor.submit(self.send_to_ids, conn_features)
     
     def send_to_ids(self, features):
-        """Send features to IDS API for analysis"""
+        """Send features to IDS API for analysis - async"""
         try:
             response = requests.post(
                 self.api_url,
                 json=features,
-                timeout=2
+                timeout=API_TIMEOUT
             )
             
             if response.status_code == 200:
                 result = response.json()
                 if result.get('threat_detected'):
+                    confidence = result.get('confidence', 0)
                     print(f"\n⚠️  THREAT DETECTED!")
                     print(f"   Source: {features['src_ip']}")
                     print(f"   Destination: {features['dst_ip']}")
-                    print(f"   Confidence: {result.get('confidence', 0):.2%}")
+                    print(f"   Confidence: {confidence:.2%}")
                     print(f"   Time: {features['timestamp']}\n")
                     
-        except requests.exceptions.RequestException as e:
-            # API might not be running yet
+        except requests.exceptions.Timeout:
+            # API timeout - might be overloaded, silently skip
+            pass
+        except requests.exceptions.ConnectionError:
+            # API not available - silently skip
+            pass
+        except requests.exceptions.RequestException:
+            # Other request errors - silently skip
             pass
         except Exception as e:
-            print(f"Error sending to IDS: {e}")
+            # Only log unexpected errors
+            print(f"Unexpected error sending to IDS: {e}")
+    
+    def _cleanup_old_connections(self):
+        """Periodically clean up old connection states"""
+        while self._running:
+            time.sleep(CONNECTION_CLEANUP_INTERVAL)
+            current_time = time.time()
+            
+            with self._lock:
+                # Remove connections older than MAX_CONNECTION_AGE
+                keys_to_remove = [
+                    key for key, state in self.connection_states.items()
+                    if current_time - state['last_update'] > MAX_CONNECTION_AGE
+                ]
+                for key in keys_to_remove:
+                    del self.connection_states[key]
+                
+                if keys_to_remove:
+                    print(f"Cleaned up {len(keys_to_remove)} old connections")
     
     def start_monitoring(self):
         """Start capturing network traffic"""
@@ -228,9 +289,13 @@ class NetworkMonitor:
             )
         except KeyboardInterrupt:
             print("\nStopping network monitor...")
+            self._running = False
+            self.executor.shutdown(wait=True)
         except Exception as e:
             print(f"Error during packet capture: {e}")
             print("Make sure you have proper permissions (run with sudo)")
+            self._running = False
+            self.executor.shutdown(wait=True)
 
 if __name__ == "__main__":
     import sys

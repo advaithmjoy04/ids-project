@@ -1,0 +1,45 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+venv/
+env/
+ENV/
+.venv
+
+# IDS Project specific
+*.pkl
+*.model
+*.h5
+
+# Dataset files (too large for GitHub)
+ids_project/data/KDDTest+.txt
+ids_project/data/KDDTrain+.txt
+data/KDDTest+.txt
+data/KDDTrain+.txt
+
+# Environment variables
+.env
+.env.local
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+logs/
+
+# Temporary files
+*.tmp
+*.temp
+

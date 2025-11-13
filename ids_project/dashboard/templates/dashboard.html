@@ -31,11 +31,42 @@
             background: rgba(0, 0, 0, 0.2);
             border-radius: 10px;
             margin-bottom: 30px;
+            position: relative;
         }
 
         .header h1 {
             font-size: 2.5em;
             margin-bottom: 10px;
+        }
+
+        .logout-button {
+            position: absolute;
+            top: 20px;
+            right: 20px;
+            background: rgba(255, 255, 255, 0.2);
+            color: #fff;
+            border: 1px solid rgba(255, 255, 255, 0.3);
+            padding: 8px 16px;
+            border-radius: 5px;
+            cursor: pointer;
+            font-size: 0.9em;
+            text-decoration: none;
+            transition: background 0.3s;
+        }
+
+        .logout-button:hover {
+            background: rgba(255, 255, 255, 0.3);
+        }
+
+        .user-info {
+            position: absolute;
+            top: 20px;
+            right: 120px;
+            color: rgba(255, 255, 255, 0.9);
+            font-size: 0.9em;
+            display: flex;
+            align-items: center;
+            gap: 5px;
         }
 
         .status-indicator {
@@ -207,6 +238,11 @@
 <body>
     <div class="container">
         <div class="header">
+            <div class="user-info">
+                <span>👤</span>
+                <span>{% if username %}{{ username }}{% else %}Admin{% endif %}</span>
+            </div>
+            <a href="/logout" class="logout-button">Logout</a>
             <h1>🛡️ Intrusion Detection System</h1>
             <p>Real-time Network Threat Monitoring
                 <span class="status-indicator status-active" id="statusIndicator"></span>
@@ -273,8 +309,28 @@
     </div>
 
     <script>
+        // Constants
+        const API_BASE_URL = window.location.origin;
+        const STATS_REFRESH_INTERVAL = 10000; // 10 seconds
+        const MAX_THREAT_HISTORY = 100;
+        const MAX_TABLE_ROWS = 20;
+        const CHART_DATA_POINTS = 20;
+        const ALERT_DISPLAY_TIME = 5000; // 5 seconds
+
         // WebSocket connection
-        const socket = io('http://localhost:5000');
+        const socket = io(API_BASE_URL);
+
+        // Cache DOM elements
+        const elements = {
+            statusIndicator: document.getElementById('statusIndicator'),
+            threatAlert: document.getElementById('threatAlert'),
+            threatMessage: document.getElementById('threatMessage'),
+            totalAnalyzed: document.getElementById('totalAnalyzed'),
+            threatsDetected: document.getElementById('threatsDetected'),
+            threatRate: document.getElementById('threatRate'),
+            avgConfidence: document.getElementById('avgConfidence'),
+            threatsTableBody: document.getElementById('threatsTableBody')
+        };
 
         // Chart configurations
         const threatChartCtx = document.getElementById('threatChart').getContext('2d');
@@ -338,6 +394,22 @@
         let threatHistory = [];
         let normalCount = 0;
         let threatCount = 0;
+        let statsCache = null;
+        let lastStatsUpdate = 0;
+        let updatePending = false;
+
+        // Debounce helper
+        function debounce(func, wait) {
+            let timeout;
+            return function executedFunction(...args) {
+                const later = () => {
+                    clearTimeout(timeout);
+                    func(...args);
+                };
+                clearTimeout(timeout);
+                timeout = setTimeout(later, wait);
+            };
+        }
 
         // Socket event handlers
         socket.on('connect', () => {
@@ -350,26 +422,39 @@
         });
 
         // Load initial data
-        function loadInitialData() {
-            fetch('/threats')
-                .then(response => response.json())
-                .then(data => {
-                    threatHistory = data.threats || [];
-                    updateDashboard();
-                });
-
-            fetch('/stats')
-                .then(response => response.json())
-                .then(data => {
-                    updateStats(data);
-                });
+        async function loadInitialData() {
+            try {
+                const [threatsResponse, statsResponse] = await Promise.all([
+                    fetch(`${API_BASE_URL}/threats`),
+                    fetch(`${API_BASE_URL}/stats`)
+                ]);
+                
+                const threatsData = await threatsResponse.json();
+                const statsData = await statsResponse.json();
+                
+                threatHistory = threatsData.threats || [];
+                // Recalculate counts from history
+                normalCount = threatHistory.filter(t => !t.threat_detected).length;
+                threatCount = threatHistory.filter(t => t.threat_detected).length;
+                
+                updateDashboard();
+                updateStats(statsData);
+            } catch (error) {
+                console.error('Error loading initial data:', error);
+            }
         }
 
         // Handle new threat update
         function handleThreatUpdate(data) {
             threatHistory.push(data);
-            if (threatHistory.length > 100) {
-                threatHistory.shift();
+            // Keep history size limited
+            if (threatHistory.length > MAX_THREAT_HISTORY) {
+                const removed = threatHistory.shift();
+                if (removed.threat_detected) {
+                    threatCount = Math.max(0, threatCount - 1);
+                } else {
+                    normalCount = Math.max(0, normalCount - 1);
+                }
             }
 
             if (data.threat_detected) {
@@ -379,27 +464,41 @@
                 normalCount++;
             }
 
-            updateDashboard();
-            updateStats();
+            // Debounce dashboard updates for performance
+            if (!updatePending) {
+                updatePending = true;
+                requestAnimationFrame(() => {
+                    updateDashboard();
+                    updateStats();
+                    updatePending = false;
+                });
+            }
         }
 
         // Show threat alert
         function showThreatAlert(data) {
-            const alert = document.getElementById('threatAlert');
-            const message = document.getElementById('threatMessage');
+            const { threatAlert, threatMessage } = elements;
             
-            message.innerHTML = `
-                <strong>Source:</strong> ${data.src_ip}<br>
-                <strong>Destination:</strong> ${data.dst_ip}<br>
+            // Use textContent for better performance and security
+            threatMessage.innerHTML = `
+                <strong>Source:</strong> ${escapeHtml(data.src_ip)}<br>
+                <strong>Destination:</strong> ${escapeHtml(data.dst_ip)}<br>
                 <strong>Confidence:</strong> ${(data.confidence * 100).toFixed(1)}%<br>
                 <strong>Time:</strong> ${new Date(data.timestamp).toLocaleString()}
             `;
             
-            alert.style.display = 'block';
+            threatAlert.style.display = 'block';
             
             setTimeout(() => {
-                alert.style.display = 'none';
-            }, 5000);
+                threatAlert.style.display = 'none';
+            }, ALERT_DISPLAY_TIME);
+        }
+
+        // Escape HTML to prevent XSS
+        function escapeHtml(text) {
+            const div = document.createElement('div');
+            div.textContent = text;
+            return div.innerHTML;
         }
 
         // Update dashboard
@@ -411,95 +510,129 @@
         // Update statistics
         function updateStats(data) {
             if (!data) {
-                data = {
-                    total_analyzed: normalCount + threatCount,
-                    threats_detected: threatCount,
-                    threat_rate: threatCount / (normalCount + threatCount) || 0,
-                    avg_confidence: threatHistory
+                const total = normalCount + threatCount;
+                let avgConf = 0;
+                if (threatCount > 0) {
+                    const confidences = threatHistory
                         .filter(t => t.threat_detected)
-                        .reduce((sum, t) => sum + t.confidence, 0) / threatCount || 0
+                        .map(t => t.confidence);
+                    avgConf = confidences.reduce((sum, c) => sum + c, 0) / confidences.length;
+                }
+                
+                data = {
+                    total_analyzed: total,
+                    threats_detected: threatCount,
+                    threat_rate: total > 0 ? threatCount / total : 0,
+                    avg_confidence: avgConf
                 };
             }
 
-            document.getElementById('totalAnalyzed').textContent = data.total_analyzed;
-            document.getElementById('threatsDetected').textContent = data.threats_detected;
-            document.getElementById('threatRate').textContent = 
-                (data.threat_rate * 100).toFixed(1) + '%';
-            document.getElementById('avgConfidence').textContent = 
-                (data.avg_confidence * 100).toFixed(1) + '%';
+            // Cache stats
+            statsCache = data;
+            lastStatsUpdate = Date.now();
+
+            // Update DOM efficiently
+            elements.totalAnalyzed.textContent = data.total_analyzed;
+            elements.threatsDetected.textContent = data.threats_detected;
+            elements.threatRate.textContent = (data.threat_rate * 100).toFixed(1) + '%';
+            elements.avgConfidence.textContent = (data.avg_confidence * 100).toFixed(1) + '%';
         }
 
         // Update threats table
         function updateThreatsTable() {
-            const tbody = document.getElementById('threatsTableBody');
+            const { threatsTableBody } = elements;
             
-            if (threatHistory.length === 0) return;
+            if (threatHistory.length === 0) {
+                threatsTableBody.innerHTML = `
+                    <tr>
+                        <td colspan="5" style="text-align: center; opacity: 0.6;">
+                            Waiting for traffic data...
+                        </td>
+                    </tr>
+                `;
+                return;
+            }
 
-            const recentThreats = threatHistory.slice(-20).reverse();
+            const recentThreats = threatHistory.slice(-MAX_TABLE_ROWS).reverse();
             
-            tbody.innerHTML = recentThreats.map(threat => {
+            // Use DocumentFragment for better performance
+            const fragment = document.createDocumentFragment();
+            
+            recentThreats.forEach(threat => {
                 const confidence = (threat.confidence * 100).toFixed(1);
                 const confidenceClass = confidence > 80 ? 'high-confidence' : 
                                        confidence > 50 ? 'medium-confidence' : 
                                        'low-confidence';
                 
-                return `
-                    <tr>
-                        <td>${new Date(threat.timestamp).toLocaleTimeString()}</td>
-                        <td>${threat.src_ip}</td>
-                        <td>${threat.dst_ip}</td>
-                        <td>
-                            <span class="threat-badge ${threat.threat_detected ? 'threat-detected' : 'threat-normal'}">
-                                ${threat.threat_detected ? 'THREAT' : 'Normal'}
-                            </span>
-                        </td>
-                        <td class="confidence ${confidenceClass}">${confidence}%</td>
-                    </tr>
+                const row = document.createElement('tr');
+                row.innerHTML = `
+                    <td>${new Date(threat.timestamp).toLocaleTimeString()}</td>
+                    <td>${escapeHtml(threat.src_ip)}</td>
+                    <td>${escapeHtml(threat.dst_ip)}</td>
+                    <td>
+                        <span class="threat-badge ${threat.threat_detected ? 'threat-detected' : 'threat-normal'}">
+                            ${threat.threat_detected ? 'THREAT' : 'Normal'}
+                        </span>
+                    </td>
+                    <td class="confidence ${confidenceClass}">${confidence}%</td>
                 `;
-            }).join('');
+                fragment.appendChild(row);
+            });
+            
+            threatsTableBody.innerHTML = '';
+            threatsTableBody.appendChild(fragment);
         }
 
         // Update charts
         function updateCharts() {
-            // Update time series chart
-            const times = threatHistory.slice(-20).map((t, i) => i + 1);
+            // Update time series chart - only show last N points
+            const recentHistory = threatHistory.slice(-CHART_DATA_POINTS);
+            const times = recentHistory.map((t, i) => i + 1);
             const threatCounts = [];
-            let count = 0;
+            let cumulativeCount = 0;
             
-            threatHistory.slice(-20).forEach(t => {
-                if (t.threat_detected) count++;
-                threatCounts.push(count);
+            recentHistory.forEach(t => {
+                if (t.threat_detected) cumulativeCount++;
+                threatCounts.push(cumulativeCount);
             });
 
             threatChart.data.labels = times;
             threatChart.data.datasets[0].data = threatCounts;
-            threatChart.update();
+            threatChart.update('none'); // 'none' mode for better performance
 
             // Update distribution chart
             distributionChart.data.datasets[0].data = [normalCount, threatCount];
-            distributionChart.update();
+            distributionChart.update('none');
         }
 
         // Test alert function
-        function testAlert() {
-            fetch('/test-alert', { method: 'POST' })
-                .then(response => response.json())
-                .then(data => {
-                    alert(data.message || data.error || 'Alert sent!');
-                })
-                .catch(error => {
-                    alert('Error sending test alert: ' + error);
-                });
+        async function testAlert() {
+            try {
+                const response = await fetch(`${API_BASE_URL}/test-alert`, { method: 'POST' });
+                const data = await response.json();
+                alert(data.message || data.error || 'Alert sent!');
+            } catch (error) {
+                console.error('Error sending test alert:', error);
+                alert('Error sending test alert: ' + error.message);
+            }
         }
 
-        // Refresh data periodically
-        setInterval(() => {
-            fetch('/stats')
-                .then(response => response.json())
-                .then(data => {
-                    updateStats(data);
-                });
-        }, 10000);
+        // Refresh data periodically with caching
+        setInterval(async () => {
+            // Only fetch if cache is stale
+            const now = Date.now();
+            if (statsCache && (now - lastStatsUpdate) < STATS_REFRESH_INTERVAL) {
+                return;
+            }
+            
+            try {
+                const response = await fetch(`${API_BASE_URL}/stats`);
+                const data = await response.json();
+                updateStats(data);
+            } catch (error) {
+                console.error('Error fetching stats:', error);
+            }
+        }, STATS_REFRESH_INTERVAL);
 
         // Initial load
         loadInitialData();

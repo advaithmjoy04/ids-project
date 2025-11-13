@@ -402,10 +402,10 @@ class NetworkMonitor:
 
 if __name__ == "__main__":
     import sys
+    global DEBUG_MODE
     
     # Parse command line arguments - default to eth0
     interface = "eth0"  # Default interface
-    global DEBUG_MODE
     
     # Parse arguments
     args = sys.argv[1:]

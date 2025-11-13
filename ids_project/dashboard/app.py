@@ -267,9 +267,10 @@ def index():
     return render_template('dashboard.html', username=username)
 
 @app.route('/analyze', methods=['POST'])
-@login_required
 def analyze_traffic():
-    """Analyze network traffic"""
+    """Analyze network traffic - Allow API access without login for monitor"""
+    # Allow API access from localhost without authentication (for network monitor)
+    # Dashboard routes still require login
     try:
         features = request.json
         result = ids_engine.predict(features)

@@ -211,9 +211,10 @@ class NetworkMonitor:
             conn_state = self.connection_states[conn_key]
             conn_state['packets'].append(features)
             conn_state['last_update'] = time.time()
+            packet_count = len(conn_state['packets'])
             
             # Check if we have enough packets for analysis
-            if len(conn_state['packets']) >= PACKETS_PER_CONNECTION:
+            if packet_count >= PACKETS_PER_CONNECTION:
                 packets_to_analyze = list(conn_state['packets'])
                 # Clear packets after copying
                 conn_state['packets'].clear()
@@ -237,6 +238,9 @@ class NetworkMonitor:
             
             if response.status_code == 200:
                 result = response.json()
+                # Always print when data is sent successfully (for debugging)
+                print(f"✓ Analyzed: {features['src_ip']} -> {features['dst_ip']} (Confidence: {result.get('confidence', 0):.1%})")
+                
                 if result.get('threat_detected'):
                     confidence = result.get('confidence', 0)
                     print(f"\n⚠️  THREAT DETECTED!")
@@ -244,19 +248,17 @@ class NetworkMonitor:
                     print(f"   Destination: {features['dst_ip']}")
                     print(f"   Confidence: {confidence:.2%}")
                     print(f"   Time: {features['timestamp']}\n")
+            else:
+                print(f"⚠️  API returned status {response.status_code}: {response.text[:100]}")
                     
         except requests.exceptions.Timeout:
-            # API timeout - might be overloaded, silently skip
-            pass
+            print("⚠️  API timeout - server might be overloaded")
         except requests.exceptions.ConnectionError:
-            # API not available - silently skip
-            pass
-        except requests.exceptions.RequestException:
-            # Other request errors - silently skip
-            pass
+            print("❌ Cannot connect to IDS API. Is the server running on http://localhost:5000?")
+        except requests.exceptions.RequestException as e:
+            print(f"⚠️  Request error: {e}")
         except Exception as e:
-            # Only log unexpected errors
-            print(f"Unexpected error sending to IDS: {e}")
+            print(f"❌ Unexpected error sending to IDS: {e}")
     
     def _cleanup_old_connections(self):
         """Periodically clean up old connection states"""
@@ -279,7 +281,21 @@ class NetworkMonitor:
     def start_monitoring(self):
         """Start capturing network traffic"""
         print(f"Starting network monitoring on interface: {self.interface}")
-        print("Capturing packets... Press Ctrl+C to stop\n")
+        print("Capturing packets... Press Ctrl+C to stop")
+        print(f"Waiting for {PACKETS_PER_CONNECTION} packets per connection before analysis...\n")
+        
+        # Test API connection before starting
+        try:
+            test_response = requests.get("http://localhost:5000/stats", timeout=2)
+            if test_response.status_code == 200:
+                print("✓ IDS API is running and accessible\n")
+            else:
+                print(f"⚠️  IDS API returned status {test_response.status_code}\n")
+        except requests.exceptions.ConnectionError:
+            print("❌ WARNING: Cannot connect to IDS API at http://localhost:5000")
+            print("   Please start the dashboard server first!\n")
+        except Exception as e:
+            print(f"⚠️  Could not verify API connection: {e}\n")
         
         try:
             sniff(

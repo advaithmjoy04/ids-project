@@ -25,6 +25,8 @@ DEBUG_MODE = False
 class NetworkMonitor:
     def __init__(self, interface="eth0", queue_size=100):
         self.interface = interface
+        # Verify interface exists
+        self._verify_interface()
         self.queue_size = queue_size
         self.connection_states = defaultdict(lambda: {
             'packets': deque(maxlen=PACKETS_PER_CONNECTION * 2),  # Allow some overflow
@@ -39,6 +41,40 @@ class NetworkMonitor:
         # Start cleanup thread
         cleanup_thread = threading.Thread(target=self._cleanup_old_connections, daemon=True)
         cleanup_thread.start()
+    
+    def _verify_interface(self):
+        """Verify that the network interface exists and is up"""
+        try:
+            import subprocess
+            # Check if interface exists
+            result = subprocess.run(
+                ['ip', 'link', 'show', self.interface],
+                capture_output=True,
+                text=True,
+                timeout=2
+            )
+            if result.returncode != 0:
+                print(f"⚠️  Warning: Interface '{self.interface}' not found!")
+                print(f"   Available interfaces:")
+                # List available interfaces
+                list_result = subprocess.run(
+                    ['ip', 'link', 'show'],
+                    capture_output=True,
+                    text=True,
+                    timeout=2
+                )
+                if list_result.returncode == 0:
+                    # Extract interface names
+                    interfaces = [line.split(':')[1].strip().split('@')[0] 
+                                 for line in list_result.stdout.split('\n') 
+                                 if ':' in line and 'state' not in line.lower()]
+                    for iface in interfaces:
+                        if iface:
+                            print(f"     - {iface}")
+                print(f"\n   Trying to use '{self.interface}' anyway...\n")
+        except Exception as e:
+            # If ip command fails, try ifconfig or just continue
+            pass
         
     def extract_packet_features(self, packet):
         """Extract features from a single packet - optimized"""
@@ -301,10 +337,14 @@ class NetworkMonitor:
     def start_monitoring(self):
         """Start capturing network traffic"""
         print(f"Starting network monitoring on interface: {self.interface}")
-        print("Capturing packets... Press Ctrl+C to stop")
-        print(f"Waiting for {PACKETS_PER_CONNECTION} packets per connection before analysis...")
-        print("\n📡 Monitoring ALL network traffic on this interface automatically")
-        print("   No need to generate test traffic - real traffic will be captured!\n")
+        print(f"📡 Capturing ALL network traffic from {self.interface}")
+        print("   Press Ctrl+C to stop")
+        print(f"   Waiting for {PACKETS_PER_CONNECTION} packets per connection before analysis...")
+        print("\n💡 The monitor will automatically capture:")
+        print("   - All incoming/outgoing network traffic")
+        print("   - Web browsing, downloads, system updates")
+        print("   - Any network activity on this interface")
+        print("   No manual traffic generation needed!\n")
         
         # Test API connection before starting (use /analyze endpoint which doesn't require login)
         try:

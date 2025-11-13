@@ -368,18 +368,35 @@ class NetworkMonitor:
         print("   (You should see '✓ Analyzed' messages when traffic is detected)\n")
         
         try:
+            print(f"🎯 Listening on {self.interface} for network packets...\n")
             sniff(
                 iface=self.interface,
                 prn=self.packet_handler,
                 store=False
             )
         except KeyboardInterrupt:
-            print("\nStopping network monitor...")
+            print("\n\nStopping network monitor...")
+            self._running = False
+            self.executor.shutdown(wait=True)
+            print("✓ Monitor stopped successfully")
+        except OSError as e:
+            if "No such device" in str(e) or "No such file" in str(e):
+                print(f"\n❌ ERROR: Interface '{self.interface}' not found or not available")
+                print(f"   Error: {e}")
+                print("\n   To find available interfaces, run:")
+                print("   ip link show")
+                print("   or")
+                print("   ifconfig")
+                print(f"\n   Then restart with: python3 network_monitor/monitor.py {self.interface}")
+            else:
+                print(f"\n❌ Error accessing interface '{self.interface}': {e}")
+                print("   Make sure you have proper permissions (run with sudo)")
             self._running = False
             self.executor.shutdown(wait=True)
         except Exception as e:
-            print(f"Error during packet capture: {e}")
-            print("Make sure you have proper permissions (run with sudo)")
+            print(f"\n❌ Error during packet capture: {e}")
+            print("   Make sure you have proper permissions (run with sudo)")
+            print(f"   Interface: {self.interface}")
             self._running = False
             self.executor.shutdown(wait=True)
 
